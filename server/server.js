@@ -1,0 +1,169 @@
+'use strict'
+
+const { json } = require('body-parser')
+const express = require('express')
+const mongoose = require('mongoose')
+const { connect } = require('./database/database')
+const session = require('express-session')//REDISSTUFF
+const RedisStore = require('connect-redis')(session)//REDISSTUFF
+const bcrypt =require('bcrypt')
+const app = express()
+const PORT = process.env.PORT || 3000
+
+const {zookeeperSchema, Zookeeper, Animal} = require('./models/models.js')
+
+app.use(express.static('client'))
+
+app.use(json())
+
+app.use(session({//REDISSTUFF
+  'store': new RedisStore({
+    url: process.env.REDIS_URL || 'redis://localhost:6379'
+  }),
+  'secret': 'supersecretkey' //fine to put this on github
+}))
+
+// app.use((req, res, next) => {//REDISSTUFF
+//   app.locals.email = req.session.email
+//   console.log("req.session", req.session);
+//   next()
+// })
+
+app.use(function(req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  res.header("Access-Control-Allow-Methods", "GET, POST,HEAD, OPTIONS,PUT, DELETE, PATCH");
+  next();
+});
+
+const HTML5_EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$/
+
+const User = mongoose.model('User', {
+  email: {
+    type: String,
+    lowercase: true,
+    required: true,
+    match: [HTML5_EMAIL_REGEX, 'Please enter a valid email address'],
+    index: { unique: true },
+  },
+  password: String
+})
+
+app.post(`/api/register`, ({body: {email, password}}, res) => {
+      console.log("hitting the register api route")
+      return new Promise((resolve, reject) => {
+      bcrypt.hash(password, 15, (err, hash) => {
+              if (err) {
+                reject(err)
+              } else {
+                resolve(hash)
+              }
+            })
+          })
+      .then(hash => User.create({ email, password: hash }))
+      // .then(() => res.redirect('/#!/login'))
+      .catch(console.error)
+})
+
+app.post(`/api/login`, ({ session, body: { email, password } }, res, err) => {
+  console.log("hitting log in route on server")
+  User.findOne({ email })
+     .then(user => {
+       if (user) {
+         return new Promise((resolve, reject) =>
+           bcrypt.compare(password, user.password, (err, matches) => {
+             if (err) {
+               reject(err)
+             } else {
+               resolve(matches)
+             }
+           })
+         )
+       } else {
+        console.log("email does not exist in our system")
+       }
+     })
+     .then((matches) => {
+       if (matches) {
+         session.email = email
+         res.redirect('/')
+       } else {
+        console.log("else, line 87")
+       }
+      })
+})
+
+app.get(`/api/allAnimals`, (req, res, err) => {
+  Animal
+  .find()
+  .then((animals) => {
+    res.json({animals})
+  })
+  .catch(err)
+})
+
+
+app.post(`/api/addAnimal`, (req, res, err) => {
+  Animal
+  .create(req.body)
+  .then((animal) => {
+    res.send("done")
+  })
+  .catch(err) 
+})
+
+app.delete(`/api/removeAnimal/:id`, (req, res, err) =>{
+  let id = req.params.id
+  Animal
+  .findOneAndRemove({_id : id})
+  .then((data) => {
+    res.send("done")
+  })
+})
+
+app.patch(`/api/updateAnimal/:id`, (req, res, err) =>{
+  let id = req.params.id
+  Animal
+  .findByIdAndUpdate(id, req.body, {new: true})
+  .then((data) => {
+    res.json(data)
+  })
+})
+
+app.post(`/api/addZookeeper`, (req, res, err) => {
+    Zookeeper
+    .create(req.body)
+    .then((zookeeper) => {
+      res.send("done")
+    })
+    .catch(err)
+})
+
+app.get(`/api/allZookeepers`, (req, res, err) => {
+  Zookeeper
+  .find()
+  .then((zookeepers) => {
+    res.json({zookeepers})
+  })
+})
+
+app.delete(`/api/zookeeper/:id`, (req, res, err) => {
+  let id = req.params.id
+  console.log("deleting zookeeper from server", id)
+  Zookeeper
+  .findOneAndRemove({_id : id})
+  .then((data) => {
+    res.send("done")
+  })
+})
+//root document that  serves up json of all available routes
+//"hey numskull, try one of these instead"
+
+//listen
+connect()
+  .then(() => {
+    app.listen(PORT, () => {
+    console.log(`Hey, I'm listening on port ${PORT}`);
+    })
+  })
+  .catch(console.error)
